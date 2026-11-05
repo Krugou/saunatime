@@ -1,6 +1,6 @@
 ---
 import { loadPrices } from "../lib/prices";
-import { renderSaunaRows, type PricePoint } from "../lib/sauna";
+import { renderBestHours, renderSaunaRows, type PricePoint } from "../lib/sauna";
 
 const { points, errors, fetchedAt } = await loadPrices();
 
@@ -12,7 +12,10 @@ const pricePoints: PricePoint[] = points.flatMap((p) => {
   return price === null ? [] : [{ start: p.start.getTime(), price }];
 });
 
-const saunaRows = renderSaunaRows(pricePoints, DEFAULT_KW, Date.now());
+const DEFAULT_HOURS = 2;
+const buildTime = Date.now();
+const saunaRows = renderSaunaRows(pricePoints, DEFAULT_KW, buildTime);
+const bestHtml = renderBestHours(pricePoints, DEFAULT_KW, buildTime, DEFAULT_HOURS);
 
 const updated = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Europe/Helsinki",
@@ -68,7 +71,27 @@ const updated = new Intl.DateTimeFormat("en-GB", {
         pricePoints.length === 0 ? (
           <p class="notice">No price data available right now.</p>
         ) : (
-          <ul class="sessions" id="sauna-rows" set:html={saunaRows} />
+          <>
+            <section class="slide" aria-label="Best hours combined">
+              <div class="slide-head">
+                <span>Session length</span>
+                <strong id="hours-out">{DEFAULT_HOURS} hours</strong>
+              </div>
+              <input
+                id="hours"
+                class="slider"
+                type="range"
+                min="1"
+                max="6"
+                step="1"
+                value={DEFAULT_HOURS}
+                aria-label="Session length in hours"
+              />
+              <div class="slide-scale"><span>1 h</span><span>6 h</span></div>
+              <div id="best-hours" set:html={bestHtml} />
+            </section>
+            <ul class="sessions" id="sauna-rows" set:html={saunaRows} />
+          </>
         )
       }
 
@@ -90,50 +113,80 @@ const updated = new Intl.DateTimeFormat("en-GB", {
     />
 
     <script>
-      import { renderSaunaRows, type PricePoint } from "../lib/sauna";
+      import {
+        buildSpeech,
+        renderBestHours,
+        renderSaunaRows,
+        speechInfoFrom,
+        type PricePoint,
+      } from "../lib/sauna";
 
       const raw = document.getElementById("price-data")?.textContent;
       const prices: PricePoint[] = raw ? JSON.parse(raw) : [];
       const input = document.getElementById("kw") as HTMLInputElement | null;
+      const slider = document.getElementById("hours") as HTMLInputElement | null;
+      const hoursOut = document.getElementById("hours-out");
+      const best = document.getElementById("best-hours");
       const list = document.getElementById("sauna-rows");
+
+      // Remember choices between visits (storage can be unavailable)
+      const load = (key: string) => {
+        try {
+          return Number(localStorage.getItem(key));
+        } catch {
+          return 0;
+        }
+      };
+      const save = (key: string, value: number) => {
+        try {
+          localStorage.setItem(key, String(value));
+        } catch {}
+      };
 
       const update = () => {
         const kw = Number(input?.value);
-        if (list && kw > 0) list.innerHTML = renderSaunaRows(prices, kw, Date.now());
+        const hours = Number(slider?.value);
+        const now = Date.now();
+        if (hoursOut && hours > 0) {
+          hoursOut.textContent = hours === 1 ? "1 hour" : `${hours} hours`;
+        }
+        if (!(kw > 0)) return;
+        if (list) list.innerHTML = renderSaunaRows(prices, kw, now);
+        if (best && hours > 0) best.innerHTML = renderBestHours(prices, kw, now, hours);
       };
 
-      // Remember the heater power between visits (storage can be unavailable)
-      const STORAGE_KEY = "saunatime:kw";
-      try {
-        const saved = Number(localStorage.getItem(STORAGE_KEY));
-        if (input && saved > 0 && saved <= 30) input.value = String(saved);
-      } catch {}
+      const savedKw = load("saunatime:kw");
+      if (input && savedKw > 0 && savedKw <= 30) input.value = String(savedKw);
+      const savedHours = load("saunatime:hours");
+      if (slider && savedHours >= 1 && savedHours <= 6) slider.value = String(savedHours);
 
       input?.addEventListener("input", () => {
         const kw = Number(input.value);
-        if (kw > 0) {
-          try {
-            localStorage.setItem(STORAGE_KEY, String(kw));
-          } catch {}
-        }
+        if (kw > 0) save("saunatime:kw", kw);
+        update();
+      });
+      slider?.addEventListener("input", () => {
+        save("saunatime:hours", Number(slider.value));
         update();
       });
       update();
 
-      // Text-to-speech: read the cheapest time aloud (tap again to stop)
+      // Text-to-speech: a fresh, funny message each tap (tap again to stop)
       const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
       if (!synth) document.documentElement.classList.add("no-tts");
 
-      list?.addEventListener("click", (event) => {
+      document.addEventListener("click", (event) => {
         const btn = (event.target as HTMLElement).closest<HTMLButtonElement>("button.say");
         if (!btn || !synth) return;
         const wasSpeaking = btn.classList.contains("speaking");
         synth.cancel();
-        list.querySelectorAll(".speaking").forEach((el) => el.classList.remove("speaking"));
+        document.querySelectorAll(".speaking").forEach((el) => el.classList.remove("speaking"));
         if (wasSpeaking) return;
 
-        const utterance = new SpeechSynthesisUtterance(btn.dataset.say ?? "");
+        const utterance = new SpeechSynthesisUtterance(buildSpeech(speechInfoFrom(btn.dataset)));
         utterance.lang = "en-GB";
+        utterance.rate = 0.95 + Math.random() * 0.2; // a little variety in delivery
+        utterance.pitch = 0.9 + Math.random() * 0.3;
         utterance.onend = utterance.onerror = () => btn.classList.remove("speaking");
         btn.classList.add("speaking");
         synth.speak(utterance);
@@ -243,6 +296,31 @@ const updated = new Intl.DateTimeFormat("en-GB", {
         cursor: pointer;
       }
       .say.speaking { outline: 3px solid var(--fg); }
+
+      .slide {
+        background: var(--card);
+        border: 2px solid var(--accent);
+        border-radius: 16px;
+        padding: 16px 18px;
+        margin-bottom: 14px;
+      }
+      .slide-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .slide-head strong { color: var(--fg); font-size: 1.7rem; white-space: nowrap; }
+      .slider { width: 100%; height: 48px; margin: 6px 0 0; accent-color: var(--accent); }
+      .slide-scale { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); }
+      .range { font-size: 1.25rem; font-weight: 700; margin-top: 12px; }
+      .slide .cost { margin: 2px 0 10px; }
+      .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+      .chip { font-size: 0.85rem; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--accent); }
+      .chip.pricey { border-color: #d64545; color: #d64545; }
+      .muted { color: var(--muted); }
       .no-tts .say { display: none; }
 
       .note { font-size: 0.8rem; color: var(--muted); margin: 1.5rem 0 0; }
