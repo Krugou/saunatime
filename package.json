@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "icons": "node scripts/make-icons.mjs"
   },
   "repository": {
     "type": "git",
@@ -24,5 +25,8 @@
   "private": "true",
   "dependencies": {
     "astro": "7.3.8"
+  },
+  "devDependencies": {
+    "sharp": "0.35.5"
   }
 }

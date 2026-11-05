@@ -4,6 +4,16 @@ import { renderBestHours, renderSaunaRows, type PricePoint } from "../lib/sauna"
 
 const { points, errors, fetchedAt } = await loadPrices();
 
+// Page metadata (paths respect the site's base path)
+const base = import.meta.env.BASE_URL.replace(/\/$/, "") + "/";
+const title = "Saunatime: cheapest time for a sauna";
+const description =
+  "Find the cheapest time to heat your sauna. See the average cost of a 1 to 6 hour session and the best hours, from Finnish spot electricity prices.";
+const imageAlt =
+  "Saunatime: a sauna stove with steam, and the text cheapest time for your sauna.";
+const pageUrl = new URL(base, Astro.site).href;
+const imageUrl = new URL(`${base}og-image.png`, Astro.site).href;
+
 const DEFAULT_KW = 8;
 
 // Best available hourly price (c/kWh incl. VAT): porssisahko.net, else Elering
@@ -29,12 +39,43 @@ const updated = new Intl.DateTimeFormat("en-GB", {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="Average cost of a sauna session in Finland, from spot electricity prices."
-    />
-    <title>Saunatime</title>
-    <link rel="icon" href="data:," />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={pageUrl} />
+    <meta name="robots" content="index, follow" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)" />
+
+    <!-- PWA and icons -->
+    <link rel="manifest" href={`${base}manifest.webmanifest`} />
+    <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
+    <link rel="icon" href={`${base}favicon-32.png`} sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href={`${base}apple-touch-icon.png`} />
+    <meta name="application-name" content="Saunatime" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Saunatime" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Saunatime" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={pageUrl} />
+    <meta property="og:locale" content="en_GB" />
+    <meta property="og:image" content={imageUrl} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={imageAlt} />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={imageUrl} />
+    <meta name="twitter:image:alt" content={imageAlt} />
   </head>
   <body>
     <main>
@@ -170,6 +211,11 @@ const updated = new Intl.DateTimeFormat("en-GB", {
         update();
       });
       update();
+
+      // Make the site installable and usable offline (production only)
+      if (import.meta.env.PROD && "serviceWorker" in navigator) {
+        navigator.serviceWorker.register("sw.js").catch(() => {});
+      }
 
       // Text-to-speech: a fresh, funny message each tap (tap again to stop)
       const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
