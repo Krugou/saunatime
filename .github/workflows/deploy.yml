@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # Rebuild every hour, 5 min past, so new hourly prices are picked up
+    - cron: "5 * * * *"
 
 permissions:
   contents: read
