@@ -1,335 +1,137 @@
 ---
-import { loadPrices, VAT } from "../lib/prices";
+import { loadPrices } from "../lib/prices";
+import { renderSaunaRows, type PricePoint } from "../lib/sauna";
 
 const { points, errors, fetchedAt } = await loadPrices();
 
-const TZ = "Europe/Helsinki";
-const dayFmt = new Intl.DateTimeFormat("fi-FI", {
-  timeZone: TZ,
-  weekday: "long",
-  day: "numeric",
-  month: "numeric",
+const DEFAULT_KW = 8;
+
+// Best available hourly price (c/kWh incl. VAT): porssisahko.net, else Elering
+const pricePoints: PricePoint[] = points.flatMap((p) => {
+  const price = p.porssisahko ?? p.eleringCents;
+  return price === null ? [] : [{ start: p.start.getTime(), price }];
 });
-const timeFmt = new Intl.DateTimeFormat("fi-FI", {
-  timeZone: TZ,
-  hour: "2-digit",
-  minute: "2-digit",
-});
-const stampFmt = new Intl.DateTimeFormat("fi-FI", {
-  timeZone: TZ,
+
+const saunaRows = renderSaunaRows(pricePoints, DEFAULT_KW, Date.now());
+
+const updated = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/Helsinki",
   dateStyle: "medium",
   timeStyle: "short",
-});
-
-const fmt = (n: number | null, digits = 2) =>
-  n === null ? "–" : n.toFixed(digits).replace(".", ",");
-
-const withPrice = points.filter((p) => p.porssisahko !== null);
-const values = withPrice.map((p) => p.porssisahko as number);
-const hasData = values.length > 0;
-const avg = hasData ? values.reduce((a, b) => a + b, 0) / values.length : null;
-const min = hasData ? Math.min(...values) : null;
-const max = hasData ? Math.max(...values) : null;
-
-const now = Date.now();
-const current = points.find(
-  (p) => p.start.getTime() <= now && now < p.start.getTime() + 3600_000,
-);
-
-const cheapest = [...withPrice]
-  .filter((p) => p.start.getTime() + 3600_000 > now)
-  .sort((a, b) => (a.porssisahko as number) - (b.porssisahko as number))
-  .slice(0, 5);
-
-// Chart geometry (SVG viewBox units)
-const VW = 1000;
-const VH = 300;
-const PAD = 28;
-const n = points.length;
-const slotW = n ? VW / n : 0;
-const yMin = Math.min(0, ...values);
-const yMax = Math.max(0, ...values);
-const span = yMax - yMin || 1;
-const yOf = (v: number) => PAD + ((yMax - v) / span) * (VH - 2 * PAD);
-const zeroY = yOf(0);
-
-const levelOf = (c: number) => (c < 5 ? "low" : c < 15 ? "mid" : "high");
-
-const bars = points.map((p, i) => {
-  const x = i * slotW + slotW * 0.12;
-  const w = slotW * 0.76;
-  if (p.porssisahko === null) return null;
-  const y = yOf(p.porssisahko);
-  return {
-    x,
-    w,
-    y: Math.min(y, zeroY),
-    h: Math.max(1, Math.abs(y - zeroY)),
-    level: levelOf(p.porssisahko),
-    start: p.start.getTime(),
-    label: `${dayFmt.format(p.start)} ${timeFmt.format(p.start)}: ${fmt(p.porssisahko)} c/kWh`,
-  };
-});
-
-const chartData = points.map((p) => ({
-  start: p.start.getTime(),
-  porssisahko: p.porssisahko,
-  eleringCents: p.eleringCents,
-}));
-
-// Show a day heading whenever the calendar day changes
-let lastDay = "";
-const rows = points.map((p) => {
-  const day = dayFmt.format(p.start);
-  const showDay = day !== lastDay;
-  lastDay = day;
-  const diff =
-    p.porssisahko !== null && p.eleringCents !== null
-      ? p.eleringCents - p.porssisahko
-      : null;
-  return { ...p, day, showDay, diff };
-});
+}).format(fetchedAt);
 ---
 
 <!doctype html>
-<html lang="fi">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Suomen pörssisähkön hinnat: porssisahko.net ja Elering (Nord Pool) yhdistettynä."
+      content="Average cost of a sauna session in Finland, from spot electricity prices."
     />
-    <title>Pörssisähkö</title>
+    <title>Saunatime</title>
     <link rel="icon" href="data:," />
   </head>
   <body>
     <main>
-      <header>
-        <h1>Pörssisähkö</h1>
-        <p class="muted">
-          Päivitetty {stampFmt.format(fetchedAt)} (Suomen aika).
-          Hinnat päivittyvät, kun sivu rakennetaan uudelleen.
-        </p>
-      </header>
+      <h1>Saunatime</h1>
+      <p class="lead">
+        Average cost of a sauna session, from Finnish spot electricity prices.
+      </p>
 
       {
         errors.length > 0 && (
-          <div class="notice" role="alert">
-            Osa tiedoista ei latautunut: {errors.join("; ")}
-          </div>
+          <p class="notice" role="alert">
+            Some price data failed to load: {errors.join("; ")}
+          </p>
         )
       }
+
+      <label class="power">
+        Heater power
+        <span class="field">
+          <input
+            id="kw"
+            type="number"
+            inputmode="decimal"
+            min="1"
+            max="30"
+            step="0.5"
+            value={DEFAULT_KW}
+          />
+          kW
+        </span>
+      </label>
 
       {
-        !hasData ? (
-          <p class="notice">Hintatietoja ei saatavilla juuri nyt.</p>
+        pricePoints.length === 0 ? (
+          <p class="notice">No price data available right now.</p>
         ) : (
-          <>
-            <section class="cards" aria-label="Yhteenveto">
-              <article class="card card-now">
-                <h2>Nyt</h2>
-                <p class="big">
-                  <span id="now-value">{fmt(current?.porssisahko ?? null)}</span>
-                  <span class="unit">c/kWh</span>
-                </p>
-                <p class="muted small">
-                  <span id="now-time">{current ? timeFmt.format(current.start) : "–"}</span>
-                  · sis. ALV {Math.round((VAT - 1) * 1000) / 10} %
-                </p>
-              </article>
-              <article class="card">
-                <h2>Keskiarvo</h2>
-                <p class="big">
-                  {fmt(avg)} <span class="unit">c/kWh</span>
-                </p>
-                <p class="muted small">Koko näytettävä jakso</p>
-              </article>
-              <article class="card">
-                <h2>Halvin</h2>
-                <p class="big">
-                  {fmt(min)} <span class="unit">c/kWh</span>
-                </p>
-              </article>
-              <article class="card">
-                <h2>Kallein</h2>
-                <p class="big">
-                  {fmt(max)} <span class="unit">c/kWh</span>
-                </p>
-              </article>
-            </section>
-
-            <section>
-              <h2>Halvimmat tulevat tunnit</h2>
-              <ol class="cheapest">
-                {cheapest.map((p) => (
-                  <li>
-                    <span>
-                      {dayFmt.format(p.start)} {timeFmt.format(p.start)}
-                    </span>
-                    <strong>{fmt(p.porssisahko)} c/kWh</strong>
-                  </li>
-                ))}
-              </ol>
-            </section>
-
-            <section>
-              <h2>Hinnat tunneittain</h2>
-              <div class="chart-wrap">
-                <svg
-                  viewBox={`0 0 ${VW} ${VH}`}
-                  role="img"
-                  aria-label="Pörssisähkön tuntihinnat stolpekaaviona"
-                  preserveAspectRatio="none"
-                >
-                  <line
-                    x1="0"
-                    x2={VW}
-                    y1={zeroY}
-                    y2={zeroY}
-                    class="axis"
-                  />
-                  {bars.map(
-                    (b) =>
-                      b && (
-                        <rect
-                          x={b.x}
-                          y={b.y}
-                          width={b.w}
-                          height={b.h}
-                          class={`bar ${b.level}`}
-                          data-start={b.start}
-                        >
-                          <title>{b.label}</title>
-                        </rect>
-                      ),
-                  )}
-                </svg>
-                <div class="legend muted small">
-                  <span><i class="dot low"></i> alle 5 c</span>
-                  <span><i class="dot mid"></i> 5–15 c</span>
-                  <span><i class="dot high"></i> yli 15 c</span>
-                </div>
-              </div>
-            </section>
-
-            <section>
-              <h2>Vertailu: porssisahko.net vs. Elering</h2>
-              <p class="muted small">
-                Elering-hinnat muunnettu c/kWh:ksi ja ALV:lla (
-                {Math.round((VAT - 1) * 1000) / 10} %). Ero = Elering − porssisahko.net.
-              </p>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Aika</th>
-                      <th class="num">porssisahko.net<br />c/kWh</th>
-                      <th class="num">Elering<br />€/MWh (ALV 0)</th>
-                      <th class="num">Elering<br />c/kWh</th>
-                      <th class="num">Ero<br />c/kWh</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r) => (
-                      <>
-                        {r.showDay && (
-                          <tr class="day">
-                            <th colspan="5">{r.day}</th>
-                          </tr>
-                        )}
-                        <tr data-start={r.start.getTime()}>
-                          <td>{timeFmt.format(r.start)}</td>
-                          <td class="num">{fmt(r.porssisahko)}</td>
-                          <td class="num">{fmt(r.elering)}</td>
-                          <td class="num">{fmt(r.eleringCents)}</td>
-                          <td class="num">
-                            {r.diff === null
-                              ? "–"
-                              : (r.diff > 0 ? "+" : "") + fmt(r.diff)}
-                          </td>
-                        </tr>
-                      </>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </>
+          <ul class="sessions" id="sauna-rows" set:html={saunaRows} />
         )
       }
 
-      <footer class="muted small">
-        Lähteet:
-        <a href="https://porssisahko.net/">porssisahko.net</a>,
-        <a href="https://dashboard.elering.ee/">Elering</a> (Nord Pool).
-        Ei virallinen hinnoittelu.
-      </footer>
+      <p class="note">
+        Prices include VAT and assume the heater runs at full power the whole
+        time. Cost is averaged over every possible start time from now on.
+        Updated {updated} (Finland time).
+      </p>
+      <p class="note">
+        Sources: <a href="https://porssisahko.net/">porssisahko.net</a> and
+        <a href="https://dashboard.elering.ee/">Elering</a>.
+      </p>
     </main>
 
     <script
       id="price-data"
       type="application/json"
-      set:html={JSON.stringify(chartData)}
+      set:html={JSON.stringify(pricePoints)}
     />
 
     <script>
-      const now = Date.now();
-      const HOUR = 3600_000;
+      import { renderSaunaRows, type PricePoint } from "../lib/sauna";
 
-      // Highlight the current hour in chart and table
-      document.querySelectorAll<HTMLElement>("[data-start]").forEach((el) => {
-        const s = Number(el.dataset.start);
-        if (s <= now && now < s + HOUR) el.classList.add("current");
-      });
-
-      // Refresh the "Nyt" card value to the current hour
       const raw = document.getElementById("price-data")?.textContent;
-      if (raw) {
-        const data: { start: number; porssisahko: number | null }[] = JSON.parse(raw);
-        const cur = data.find((p) => p.start <= now && now < p.start + HOUR);
-        const fi = new Intl.DateTimeFormat("fi-FI", {
-          timeZone: "Europe/Helsinki",
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-        if (cur && cur.porssisahko !== null) {
-          const value = cur.porssisahko.toFixed(2).replace(".", ",");
-          const valueEl = document.getElementById("now-value");
-          if (valueEl) valueEl.textContent = value;
-          const timeEl = document.getElementById("now-time");
-          if (timeEl) timeEl.textContent = fi.format(new Date(cur.start));
-        }
-      }
+      const prices: PricePoint[] = raw ? JSON.parse(raw) : [];
+      const input = document.getElementById("kw") as HTMLInputElement | null;
+      const list = document.getElementById("sauna-rows");
+
+      const update = () => {
+        const kw = Number(input?.value);
+        if (list && kw > 0) list.innerHTML = renderSaunaRows(prices, kw, Date.now());
+      };
+
+      input?.addEventListener("input", update);
+      update();
     </script>
 
-    <style>
+    <style is:global>
       :root {
         --bg: #f7f7f5;
         --fg: #1c1c1a;
-        --muted: #6b6b66;
+        --muted: #5f5f5a;
         --card: #ffffff;
-        --border: #e2e2dc;
-        --low: #2e9e5b;
-        --mid: #e0a526;
-        --high: #d64545;
-        --accent: #2b6cb0;
+        --border: #dcdcd5;
+        --accent: #1f6f43;
       }
       @media (prefers-color-scheme: dark) {
         :root:not([data-theme="light"]) {
           --bg: #141413;
-          --fg: #ecece8;
-          --muted: #9a9a94;
+          --fg: #f1f1ed;
+          --muted: #a5a59e;
           --card: #1f1f1d;
           --border: #34342f;
+          --accent: #5cc98a;
         }
       }
       :root[data-theme="dark"] {
         --bg: #141413;
-        --fg: #ecece8;
-        --muted: #9a9a94;
+        --fg: #f1f1ed;
+        --muted: #a5a59e;
         --card: #1f1f1d;
         --border: #34342f;
+        --accent: #5cc98a;
       }
 
       * { box-sizing: border-box; }
@@ -337,86 +139,63 @@ const rows = points.map((p) => {
         margin: 0;
         background: var(--bg);
         color: var(--fg);
-        font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font: 20px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       }
-      main {
-        max-width: 960px;
-        margin: 0 auto;
-        padding: 16px;
-      }
-      h1 { font-size: 1.75rem; margin: 0.5rem 0 0.25rem; }
-      h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; }
-      .muted { color: var(--muted); }
-      .small { font-size: 0.85rem; }
-      .notice {
-        border: 1px solid var(--border);
-        background: var(--card);
-        border-left: 4px solid var(--high);
-        padding: 10px 12px;
-        border-radius: 6px;
-      }
+      main { max-width: 640px; margin: 0 auto; padding: 20px 16px 40px; }
+      h1 { font-size: 2.6rem; line-height: 1.1; margin: 0.25rem 0 0.5rem; }
+      .lead { color: var(--muted); margin: 0 0 1.5rem; }
 
-      .cards {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 12px;
-        margin-top: 12px;
-      }
-      .card {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 12px 14px;
-      }
-      .card h2 { margin: 0; font-size: 0.85rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-      .card-now { border-color: var(--accent); }
-      .big { font-size: 1.8rem; font-weight: 700; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
-      .unit { font-size: 0.9rem; font-weight: 500; color: var(--muted); margin-left: 4px; }
-
-      .cheapest { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
-      .cheapest li {
+      .power {
         display: flex;
+        align-items: center;
         justify-content: space-between;
+        gap: 12px;
+        font-weight: 600;
+        margin-bottom: 1.25rem;
+      }
+      .field { display: inline-flex; align-items: center; gap: 8px; }
+      .power input {
+        width: 5.5rem;
+        font: inherit;
+        font-size: 1.6rem;
+        font-weight: 700;
+        text-align: center;
+        padding: 8px;
+        color: var(--fg);
+        background: var(--card);
+        border: 2px solid var(--border);
+        border-radius: 12px;
+      }
+
+      .sessions { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+      .sessions li {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: baseline;
+        gap: 2px 12px;
         background: var(--card);
         border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 16px 18px;
+      }
+      .label { font-weight: 600; color: var(--muted); }
+      .cost {
+        font-size: 2.6rem;
+        font-weight: 800;
+        line-height: 1.1;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+      .best { grid-column: 1 / -1; font-size: 0.9rem; color: var(--muted); }
+
+      .note { font-size: 0.8rem; color: var(--muted); margin: 1.5rem 0 0; }
+      .notice {
+        border-left: 4px solid #d64545;
+        background: var(--card);
+        padding: 10px 12px;
         border-radius: 8px;
-        padding: 8px 12px;
+        font-size: 0.9rem;
       }
-      .cheapest strong { color: var(--low); font-variant-numeric: tabular-nums; }
-
-      .chart-wrap {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 12px;
-      }
-      svg { width: 100%; height: 260px; display: block; }
-      .axis { stroke: var(--border); stroke-width: 2; vector-effect: non-scaling-stroke; }
-      .bar { transition: opacity 0.2s; }
-      .bar.low { fill: var(--low); }
-      .bar.mid { fill: var(--mid); }
-      .bar.high { fill: var(--high); }
-      .bar.current, .bar:hover { opacity: 0.6; }
-      .legend { display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
-      .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
-      .dot.low { background: var(--low); }
-      .dot.mid { background: var(--mid); }
-      .dot.high { background: var(--high); }
-
-      .table-wrap {
-        overflow-x: auto;
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-      }
-      table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-      th, td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; }
-      th { font-weight: 600; color: var(--muted); }
-      .num { text-align: right; font-variant-numeric: tabular-nums; }
-      tr.day th { background: var(--bg); color: var(--fg); padding-top: 12px; }
-      tr.current td { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }
-
-      footer { margin-top: 2rem; padding-bottom: 2rem; }
       a { color: var(--accent); }
     </style>
   </body>
