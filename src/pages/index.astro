@@ -102,8 +102,42 @@ const updated = new Intl.DateTimeFormat("en-GB", {
         if (list && kw > 0) list.innerHTML = renderSaunaRows(prices, kw, Date.now());
       };
 
-      input?.addEventListener("input", update);
+      // Remember the heater power between visits (storage can be unavailable)
+      const STORAGE_KEY = "saunatime:kw";
+      try {
+        const saved = Number(localStorage.getItem(STORAGE_KEY));
+        if (input && saved > 0 && saved <= 30) input.value = String(saved);
+      } catch {}
+
+      input?.addEventListener("input", () => {
+        const kw = Number(input.value);
+        if (kw > 0) {
+          try {
+            localStorage.setItem(STORAGE_KEY, String(kw));
+          } catch {}
+        }
+        update();
+      });
       update();
+
+      // Text-to-speech: read the cheapest time aloud (tap again to stop)
+      const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
+      if (!synth) document.documentElement.classList.add("no-tts");
+
+      list?.addEventListener("click", (event) => {
+        const btn = (event.target as HTMLElement).closest<HTMLButtonElement>("button.say");
+        if (!btn || !synth) return;
+        const wasSpeaking = btn.classList.contains("speaking");
+        synth.cancel();
+        list.querySelectorAll(".speaking").forEach((el) => el.classList.remove("speaking"));
+        if (wasSpeaking) return;
+
+        const utterance = new SpeechSynthesisUtterance(btn.dataset.say ?? "");
+        utterance.lang = "en-GB";
+        utterance.onend = utterance.onerror = () => btn.classList.remove("speaking");
+        btn.classList.add("speaking");
+        synth.speak(utterance);
+      });
     </script>
 
     <style is:global>
@@ -186,7 +220,30 @@ const updated = new Intl.DateTimeFormat("en-GB", {
         color: var(--accent);
         font-variant-numeric: tabular-nums;
       }
-      .best { grid-column: 1 / -1; font-size: 0.9rem; color: var(--muted); }
+      .best {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      .say {
+        font: inherit;
+        font-size: 1rem;
+        font-weight: 700;
+        min-height: 48px;
+        padding: 0 18px;
+        color: var(--bg);
+        background: var(--accent);
+        border: 0;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      .say.speaking { outline: 3px solid var(--fg); }
+      .no-tts .say { display: none; }
 
       .note { font-size: 0.8rem; color: var(--muted); margin: 1.5rem 0 0; }
       .notice {

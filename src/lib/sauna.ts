@@ -24,6 +24,28 @@ const whenFmt = new Intl.DateTimeFormat("en-GB", {
 
 const eur = (n: number) => "€" + n.toFixed(2);
 
+const spokenDayFmt = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/Helsinki",
+  weekday: "long",
+});
+const spokenTimeFmt = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/Helsinki",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+
+/** Sentence for the text-to-speech button. */
+function spokenText(hours: number, start: number, cost: number, from: number): string {
+  const when = new Date(start);
+  const away = Math.round((start - from) / HOUR);
+  const timing = away <= 0 ? "That is right now." : `That is in ${away} ${away === 1 ? "hour" : "hours"}.`;
+  return (
+    `The cheapest time for a ${hours} hour sauna is ${spokenDayFmt.format(when)} at ` +
+    `${spokenTimeFmt.format(when)}. ${timing} It will cost about ${cost.toFixed(2)} euros.`
+  );
+}
+
 interface Window {
   start: number;
   /** Average price over the window, c/kWh */
@@ -70,7 +92,9 @@ export function renderSaunaRows(
     return (
       `<li><div class="label">${label}</div>` +
       `<div class="cost">${eur(cost(avgPrice))}</div>` +
-      `<div class="best">Cheapest: ${whenFmt.format(new Date(cheapest.start))} · ${eur(cost(cheapest.avg))}</div></li>`
+      `<div class="best"><span>Cheapest: ${whenFmt.format(new Date(cheapest.start))} · ${eur(cost(cheapest.avg))}</span>` +
+      `<button type="button" class="say" aria-label="Read the cheapest ${label} sauna time aloud" ` +
+      `data-say="${spokenText(hours, cheapest.start, cost(cheapest.avg), from)}">🔊 Listen</button></div></li>`
     );
   }).join("");
 }
